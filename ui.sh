@@ -67,11 +67,6 @@ if [[ ${UI_BACKEND:-} == gum ]] && command -v gum >/dev/null 2>&1; then
   _UI_HAS_GUM=1
 fi
 
-_UI_TIMESTAMPS=0
-if [[ ${UI_TIMESTAMPS:-0} == 1 ]]; then
-  _UI_TIMESTAMPS=1
-fi
-
 # Status counters, reported by ui_summary.
 _UI_N_OK=0
 _UI_N_WARN=0
@@ -129,7 +124,7 @@ _ui_symbol() {
 # _ui_prefix — set _UI_PREFIX to the HH:MM:SS prefix when UI_TIMESTAMPS=1.
 _ui_prefix() {
   _UI_PREFIX=''
-  if (( _UI_TIMESTAMPS )); then
+  if [[ ${UI_TIMESTAMPS:-0} == 1 ]]; then
     printf -v _UI_PREFIX '[%(%H:%M:%S)T] ' -1
   fi
   return 0
