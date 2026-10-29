@@ -15,7 +15,7 @@ if [[ -n ${_UI_LOADED:-} ]]; then
 fi
 _UI_LOADED=1
 
-UI_VERSION="0.1.0"
+UI_VERSION="0.2.0"
 
 # --- Capability detection (once, at source time) ---------------------------
 
