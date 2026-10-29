@@ -1,19 +1,21 @@
 #!/usr/bin/env bats
-# tests/cli.bats — installer and CLI behaviour, using a local release directory.
+# tests/cli.bats — the vendoring tool, driven against a local release directory.
 
 bats_require_minimum_version 1.5.0
 
 setup() {
   REPO="$BATS_TEST_DIRNAME/.."
-  CLI="$REPO/bin/bash-ui"
+  CLI="$REPO/scripts/bash-ui.sh"
   TMP="$BATS_TEST_TMPDIR"
   REL="$TMP/release"
-  mkdir -p "$REL"
+  mkdir -p "$REL" "$TMP/proj"
   cp "$REPO/ui.sh" "$REL/ui.sh"
-  cp "$CLI" "$REL/bash-ui"
   (cd "$REL" && sha256sum ui.sh >ui.sh.sha256)
   CURRENT=$(sed -n 's/^UI_VERSION="\(.*\)"$/\1/p' "$REPO/ui.sh")
   NEW="${CURRENT%.*}.$((${CURRENT##*.} + 1))"
+  export BASH_UI_SOURCE="$REL"
+  cd "$TMP/proj" || return 1
+  git init -q
 }
 
 # restage <version> — rewrite the staged release at a given version.
@@ -22,159 +24,158 @@ restage() {
   (cd "$REL" && sha256sum ui.sh >ui.sh.sha256)
 }
 
-@test "version prints the library version" {
-  run "$CLI" version
-  [ "$status" -eq 0 ]
-  [ "$output" = "bash-ui $CURRENT" ]
+# stage_version <version> — add a v<version>/ directory to the release mirror.
+stage_version() {
+  mkdir -p "$REL/v$1"
+  sed "s/^UI_VERSION=.*/UI_VERSION=\"$1\"/" "$REPO/ui.sh" >"$REL/v$1/ui.sh"
+  (cd "$REL/v$1" && sha256sum ui.sh >ui.sh.sha256)
 }
 
-@test "help exits 0" {
-  run "$CLI" --help
+@test "help lists the four commands and no install command" {
+  run bash "$CLI" --help
   [ "$status" -eq 0 ]
-  [[ $output == *"bash-ui inline"* ]]
+  [[ $output == *"init"* ]]
+  [[ $output == *"check"* ]]
+  [[ $output == *"update"* ]]
+  [[ $output == *"inline"* ]]
+  [[ $output != *"install-timer"* ]]
+  [[ $output != *"install.sh"* ]]
 }
 
 @test "an unknown command exits 1" {
-  run "$CLI" nope
+  run bash "$CLI" nope
   [ "$status" -eq 1 ]
   [[ $output == *"unknown command"* ]]
 }
 
-@test "inline --check fails on a stale region" {
-  printf '# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\n' >"$TMP/target.sh"
-  run "$CLI" inline --check "$TMP/target.sh"
-  [ "$status" -eq 1 ]
-  [[ $output == *"current is $CURRENT"* ]]
+@test "init vendors the library and its checksum" {
+  run bash "$CLI" init --path vendor/bash-ui/ui.sh
+  [ "$status" -eq 0 ]
+  [ -f vendor/bash-ui/ui.sh ]
+  [ -f vendor/bash-ui/ui.sh.sha256 ]
+  grep -q "^UI_VERSION=\"$CURRENT\"$" vendor/bash-ui/ui.sh
+
+  run bash "$CLI" check
+  [ "$status" -eq 0 ]
+  [[ $output == *"is current"* ]]
 }
 
-@test "inline rewrites the region and then passes --check" {
-  printf '#!/usr/bin/env bash\necho before\n# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\necho after\n' >"$TMP/target.sh"
-  run "$CLI" inline "$TMP/target.sh"
+@test "init --ci writes the workflow with the vendored path" {
+  run bash "$CLI" init --path vendor/bash-ui/ui.sh --ci
+  [ "$status" -eq 0 ]
+  [ -f .github/workflows/bash-ui.yml ]
+  grep -q 'vendor/bash-ui/ui.sh' .github/workflows/bash-ui.yml
+  grep -q 'sha256sum -c' .github/workflows/bash-ui.yml
+}
+
+@test "init refuses a bad checksum and leaves no vendored file" {
+  printf '0000000000000000000000000000000000000000000000000000000000000000  ui.sh\n' >"$REL/ui.sh.sha256"
+  run bash "$CLI" init --path vendor/bash-ui/ui.sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"checksum mismatch"* ]]
+  [ ! -f vendor/bash-ui/ui.sh ]
+}
+
+@test "check fails when the vendored version is stale" {
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  restage "$NEW"
+  run bash "$CLI" check
+  [ "$status" -eq 1 ]
+  [[ $output == *"$CURRENT, latest is $NEW"* ]]
+}
+
+@test "check fails when the vendored file was edited" {
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  printf '\n# local edit\n' >>vendor/bash-ui/ui.sh
+  run bash "$CLI" check
+  [ "$status" -eq 1 ]
+  [[ $output == *"checksum mismatch"* ]]
+}
+
+@test "check fails when nothing is vendored" {
+  run bash "$CLI" check
+  [ "$status" -eq 1 ]
+  [[ $output == *"not found"* ]]
+}
+
+@test "check reports stale inline markers" {
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  mkdir -p scripts
+  printf '# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\n' >scripts/inl.sh
+  run bash "$CLI" check
+  [ "$status" -eq 1 ]
+  [[ $output == *"scripts/inl.sh: 0.0.1"* ]]
+}
+
+@test "update replaces the vendored file and its checksum" {
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  restage "$NEW"
+
+  run bash "$CLI" update
+  [ "$status" -eq 0 ]
+  [[ $output == *"Vendored bash-ui $NEW"* ]]
+  grep -q "^UI_VERSION=\"$NEW\"$" vendor/bash-ui/ui.sh
+  (cd vendor/bash-ui && sha256sum -c ui.sh.sha256)
+
+  run bash "$CLI" check
+  [ "$status" -eq 0 ]
+}
+
+@test "update --version pins a specific release" {
+  stage_version "$NEW"
+  run bash "$CLI" update --version "$NEW"
+  [ "$status" -eq 0 ]
+  grep -q "^UI_VERSION=\"$NEW\"$" vendor/bash-ui/ui.sh
+  (cd vendor/bash-ui && sha256sum -c ui.sh.sha256)
+}
+
+@test "update rewrites stale inline markers" {
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\necho before\n# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\necho after\n' >scripts/inl.sh
+
+  run bash "$CLI" update
+  [ "$status" -eq 0 ]
+  grep -q "^# >>> bash-ui $CURRENT >>>$" scripts/inl.sh
+  grep -q '^echo before$' scripts/inl.sh
+  grep -q '^echo after$' scripts/inl.sh
+  run bash "$CLI" check
+  [ "$status" -eq 0 ]
+}
+
+@test "inline --check fails on a stale region and passes after inline" {
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  printf '# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\n' >target.sh
+
+  run bash "$CLI" inline --check target.sh
+  [ "$status" -eq 1 ]
+
+  run bash "$CLI" inline target.sh
   [ "$status" -eq 0 ]
 
-  run "$CLI" inline --check "$TMP/target.sh"
+  run bash "$CLI" inline --check target.sh
   [ "$status" -eq 0 ]
-
-  grep -q "^# >>> bash-ui $CURRENT >>>$" "$TMP/target.sh"
-  grep -q 'UI_VERSION=' "$TMP/target.sh"
-  grep -q '^echo before$' "$TMP/target.sh"
-  grep -q '^echo after$' "$TMP/target.sh"
 }
 
 @test "inline refuses a file without markers" {
-  printf 'echo hi\n' >"$TMP/plain.sh"
-  run "$CLI" inline "$TMP/plain.sh"
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  printf 'echo hi\n' >plain.sh
+  run bash "$CLI" inline plain.sh
   [ "$status" -eq 1 ]
   [[ $output == *"no '# >>> bash-ui"* ]]
 }
 
 @test "inline refuses an unterminated region" {
-  printf '# >>> bash-ui 0.0.1 >>>\nold\n' >"$TMP/open.sh"
-  run "$CLI" inline "$TMP/open.sh"
+  bash "$CLI" init --path vendor/bash-ui/ui.sh >/dev/null 2>&1
+  printf '# >>> bash-ui 0.0.1 >>>\nold\n' >open.sh
+  run bash "$CLI" inline open.sh
   [ "$status" -eq 1 ]
   [[ $output == *"unterminated"* ]]
 }
 
-@test "check exits 0 when up to date" {
-  BASH_UI_SOURCE="$REL" run "$CLI" check
-  [ "$status" -eq 0 ]
-  [[ $output == *"up to date"* ]]
-}
-
-@test "check exits 1 and names both versions when newer" {
-  restage "$NEW"
-  BASH_UI_SOURCE="$REL" run "$CLI" check
+@test "inline needs a vendored copy first" {
+  printf '# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\n' >target.sh
+  run bash "$CLI" inline target.sh
   [ "$status" -eq 1 ]
-  [[ $output == *"$CURRENT -> $NEW"* ]]
-}
-
-@test "update replaces the library with the verified asset" {
-  restage "$NEW"
-  mkdir -p "$TMP/lib"
-  cp "$REPO/ui.sh" "$TMP/lib/ui.sh"
-
-  BASH_UI="$TMP/lib/ui.sh" BASH_UI_SOURCE="$REL" run "$CLI" update
-  [ "$status" -eq 0 ]
-  [[ $output == *"$CURRENT -> $NEW"* ]]
-  grep -q "^UI_VERSION=\"$NEW\"$" "$TMP/lib/ui.sh"
-}
-
-@test "update refuses a major jump without --major" {
-  restage "99.0.0"
-  mkdir -p "$TMP/lib"
-  cp "$REPO/ui.sh" "$TMP/lib/ui.sh"
-
-  BASH_UI="$TMP/lib/ui.sh" BASH_UI_SOURCE="$REL" run "$CLI" update
-  [ "$status" -eq 1 ]
-  [[ $output == *"refusing major jump"* ]]
-  grep -q "^UI_VERSION=\"$CURRENT\"$" "$TMP/lib/ui.sh"
-}
-
-@test "update accepts a major jump with --major" {
-  restage "99.0.0"
-  mkdir -p "$TMP/lib"
-  cp "$REPO/ui.sh" "$TMP/lib/ui.sh"
-
-  BASH_UI="$TMP/lib/ui.sh" BASH_UI_SOURCE="$REL" run "$CLI" update --major
-  [ "$status" -eq 0 ]
-  grep -q '^UI_VERSION="99.0.0"$' "$TMP/lib/ui.sh"
-}
-
-@test "update refuses a bad checksum and keeps the library" {
-  restage "$NEW"
-  printf '0000000000000000000000000000000000000000000000000000000000000000  ui.sh\n' >"$REL/ui.sh.sha256"
-  mkdir -p "$TMP/lib"
-  cp "$REPO/ui.sh" "$TMP/lib/ui.sh"
-
-  BASH_UI="$TMP/lib/ui.sh" BASH_UI_SOURCE="$REL" run "$CLI" update
-  [ "$status" -eq 1 ]
-  [[ $output == *"checksum mismatch"* ]]
-  grep -q "^UI_VERSION=\"$CURRENT\"$" "$TMP/lib/ui.sh"
-}
-
-@test "install.sh installs a working prefix" {
-  run env BASH_UI_SOURCE="$REL" bash "$REPO/install.sh" --prefix "$TMP/pfx"
-  [ "$status" -eq 0 ]
-  [ -f "$TMP/pfx/lib/bash-ui/ui.sh" ]
-  [ -x "$TMP/pfx/bin/bash-ui" ]
-
-  run "$TMP/pfx/bin/bash-ui" version
-  [ "$status" -eq 0 ]
-  [ "$output" = "bash-ui $CURRENT" ]
-}
-
-@test "install.sh rejects a checksum mismatch" {
-  printf '0000000000000000000000000000000000000000000000000000000000000000  ui.sh\n' >"$REL/ui.sh.sha256"
-  run env BASH_UI_SOURCE="$REL" bash "$REPO/install.sh" --prefix "$TMP/pfx"
-  [ "$status" -eq 1 ]
-  [[ $output == *"checksum mismatch"* ]]
-  [ ! -f "$TMP/pfx/lib/bash-ui/ui.sh" ]
-}
-
-@test "install-timer writes systemd user units" {
-  mkdir -p "$TMP/bin" "$TMP/home"
-  printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/bin/systemctl"
-  chmod +x "$TMP/bin/systemctl"
-
-  HOME="$TMP/home" PATH="$TMP/bin:$PATH" run "$CLI" install-timer
-  [ "$status" -eq 0 ]
-  [ -f "$TMP/home/.config/systemd/user/bash-ui-update.timer" ]
-  [ -f "$TMP/home/.config/systemd/user/bash-ui-update.service" ]
-  grep -q 'OnCalendar=daily' "$TMP/home/.config/systemd/user/bash-ui-update.timer"
-  grep -q 'update --quiet' "$TMP/home/.config/systemd/user/bash-ui-update.service"
-}
-
-@test "install-timer falls back to cron without systemd" {
-  mkdir -p "$TMP/bin" "$TMP/home"
-  printf '#!/usr/bin/env bash\nexit 1\n' >"$TMP/bin/systemctl"
-  cat >"$TMP/bin/crontab" <<EOF
-#!/usr/bin/env bash
-if [[ \${1:-} == -l ]]; then exit 1; fi
-cat > "$TMP/crontab.out"
-EOF
-  chmod +x "$TMP/bin/systemctl" "$TMP/bin/crontab"
-
-  HOME="$TMP/home" PATH="$TMP/bin:$PATH" run "$CLI" install-timer
-  [ "$status" -eq 0 ]
-  grep -q 'update --quiet' "$TMP/crontab.out"
+  [[ $output == *"run init first"* ]]
 }
