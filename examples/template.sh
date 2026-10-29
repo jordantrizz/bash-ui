@@ -23,10 +23,25 @@ if ! command -v ui_ok >/dev/null 2>&1; then
   ui_step() { printf '> %s\n' "$*" >&2; }
   ui_info() { printf '%s\n' "$*" >&2; }
   ui_section() { printf '== %s ==\n' "$*" >&2; }
-  ui_header() { printf '== %s ==\n' "$*" >&2; }
+  ui_header() { printf '== %s ==\n' "${1:-}" >&2; }
   ui_kv() { printf '  %-14s %s\n' "${1:-}" "${2:-}" >&2; }
   ui_list() { printf '  - %s\n' "$@" >&2; }
   ui_hr() { printf '%s\n' '----------------------------------------' >&2; }
+  ui_style() { shift; printf '%s' "$*"; }
+  ui_confirm() { if [[ ${UI_YES:-0} == 1 || ${2:-n} == y ]]; then return 0; fi; return 1; }
+  ui_spin() {
+    local _m=${1:-}
+    shift
+    if [[ ${1:-} == -- ]]; then shift; fi
+    if "$@" >&2; then
+      ui_ok "$_m"
+    else
+      local _rc=$?
+      ui_err "$_m (exit $_rc)"
+      return "$_rc"
+    fi
+  }
+  ui_table() { cat >&2; }
   ui_debug() { :; }
   ui_summary() { :; }
 fi

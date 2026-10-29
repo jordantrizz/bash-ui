@@ -15,19 +15,13 @@ palette, one set of symbols, one vocabulary of output functions.
 
 ```bash
 # shellcheck source=/dev/null
-for _f in "${BASH_UI:-}" "$HOME/.local/lib/bash-ui/ui.sh" /usr/local/lib/bash-ui/ui.sh; do
-  [[ -n $_f && -r $_f ]] && { source "$_f"; break; }
-done
-command -v ui_ok >/dev/null 2>&1 || {   # minimal fallback so scripts never hard-fail
-  ui_ok(){ echo "OK: $*" >&2; }; ui_warn(){ echo "WARN: $*" >&2; }
-  ui_err(){ echo "ERR: $*" >&2; }; ui_die(){ echo "ERR: $*" >&2; exit "${2:-1}"; }
-  ui_step(){ echo "> $*" >&2; }; ui_info(){ echo "$*" >&2; }; ui_section(){ echo "== $* ==" >&2; }
-  ui_header(){ echo "== $* ==" >&2; }; ui_kv(){ printf '  %-14s %s\n' "$1" "$2" >&2; }
-  ui_debug(){ :; }; ui_summary(){ :; }
-}
+source "$HOME/.local/lib/bash-ui/ui.sh"
 ```
 
-`examples/template.sh` is a ready-to-copy script skeleton that uses it.
+`examples/template.sh` is the ready-to-copy skeleton: it also looks in
+`$BASH_UI` and `/usr/local/lib/bash-ui/`, and falls back to stub functions so a
+script never hard-fails when the library is missing. Use it as the starting
+point for every new script.
 
 ## API
 
