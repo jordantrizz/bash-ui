@@ -22,10 +22,8 @@ jobs:
           mkdir -p dist
           cp ui.sh dist/ui.sh
           (cd dist && sha256sum ui.sh >ui.sh.sha256)
-          cp bin/bash-ui dist/bash-ui
-          chmod 0755 dist/bash-ui
-          cp install.sh dist/install.sh
-          chmod 0755 dist/install.sh
+          cp scripts/bash-ui.sh dist/bash-ui.sh
+          chmod 0755 dist/bash-ui.sh
 
       - name: Extract changelog notes
         run: |
@@ -43,7 +41,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             dist/ui.sh \
             dist/ui.sh.sha256 \
-            dist/bash-ui \
-            dist/install.sh \
+            dist/bash-ui.sh \
             --title "$GITHUB_REF_NAME" \
             --notes-file dist/notes.md
