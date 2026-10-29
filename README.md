@@ -84,6 +84,46 @@ That installs `ui.sh` to `~/.local/lib/bash-ui/` and the `bash-ui` CLI to
 | `bash-ui inline --check <file>` | Exit non-zero when the inlined copy is stale |
 | `bash-ui install-timer` | Schedule a daily `update --quiet` (systemd user timer, or cron) |
 
+## Rollout
+
+1. **Install once per machine.** `curl … | bash` puts the library and CLI in
+   `~/.local`; set `BASH_UI` if you keep it somewhere else.
+2. **Start every new script from `examples/template.sh`.** It loads the library,
+   falls back to stubs, and shows the header/section/summary shape.
+3. **Refactor existing scripts with the skill.** `skills/bash-ui/SKILL.md` has
+   the vocabulary table, the five rules and a refactor checklist. Highest-traffic
+   scripts first.
+4. **Single-file scripts use the inline markers.** Mark the region once:
+
+   ```bash
+   # >>> bash-ui 0.1.0 >>>
+   …the library…
+   # <<< bash-ui <<<
+   ```
+
+   Then keep it current with `bash-ui inline script.sh`, and fail CI when it
+   goes stale:
+
+   ```yaml
+   - name: Check inlined bash-ui
+     run: |
+       curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/install.sh | bash
+       echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+       bash-ui inline --check path/to/script.sh
+   ```
+
+5. **Optionally let a release open the PR for you.** Call the reusable workflow
+   from the consumer repo:
+
+   ```yaml
+   jobs:
+     bash-ui:
+       uses: jordantrizz/bash-ui/.github/workflows/sync-inline.yml@main
+       permissions:
+         contents: write
+         pull-requests: write
+   ```
+
 ## Develop
 
 ```bash
