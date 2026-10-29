@@ -45,6 +45,10 @@ command -v ui_ok >/dev/null 2>&1 || {   # minimal fallback so scripts never hard
 | `ui_kv "Key" "Value"` | Aligned key/value pair; `--stdout` writes to stdout |
 | `ui_list "item" …` | Bulleted list |
 | `ui_hr` | Horizontal rule across the terminal width |
+| `ui_spin "msg" -- cmd …` | Run a command with a spinner, then report ok/err with its exit code |
+| `ui_confirm "Question?" [default]` | y/n prompt; returns 0/1 |
+| `ui_table` | Read TSV from stdin, print aligned columns with a bold header |
+| `ui_summary` | End-of-run tally of the ok/warn/err counts |
 | `ui_style <role> "text"` | Styled text on stdout for inline use |
 
 Roles for `ui_style`: `accent`, `ok`, `warn`, `err`, `info`, `dim`, `bold`.
@@ -58,6 +62,8 @@ Roles for `ui_style`: `accent`, `ok`, `warn`, `err`, `info`, `dim`, `bold`.
 | `UI_ASCII=1` | ASCII symbols instead of UTF-8 |
 | `UI_QUIET=1` | Suppress step/info/ok lines; warnings and errors always show |
 | `UI_VERBOSE=1` | Enable `ui_debug` |
+| `UI_YES=1` | Answer every `ui_confirm` with yes |
+| `UI_BACKEND=gum` | Use gum for `ui_spin`/`ui_confirm` when it is installed |
 | `UI_TIMESTAMPS=1` | Prefix lines with `HH:MM:SS` |
 | `UI_KV_WIDTH=14` | Key column width for `ui_kv` |
 | `UI_APP_NAME` | Name shown by `ui_header` (defaults to the script name) |

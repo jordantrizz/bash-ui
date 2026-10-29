@@ -348,3 +348,178 @@ ui_summary() {
     "$err_sgr" "$_UI_N_ERR" "$_UI_RESET" >&2
   return 0
 }
+
+# ui_spin "msg" -- cmd args… — run a command with a spinner and report the
+# result. Output is captured and printed only on failure. Returns the command's
+# exit status (2 when no command is given).
+ui_spin() {
+  local msg=${1:-}
+  shift || true
+  if [[ ${1:-} == -- ]]; then
+    shift
+  fi
+  if (( $# == 0 )); then
+    ui_warn "ui_spin: no command given"
+    return 2
+  fi
+
+  local rc=0
+  if (( _UI_HAS_GUM )); then
+    if gum spin --spinner dot --title "$msg" -- "$@"; then
+      ui_ok "$msg"
+    else
+      rc=$?
+      ui_err "$msg (exit $rc)"
+    fi
+    return "$rc"
+  fi
+
+  local tmp="${TMPDIR:-/tmp}/.ui-spin.$$.${RANDOM}"
+  "$@" >"$tmp" 2>&1 &
+  local pid=$!
+
+  if (( _UI_TTY )) && [[ -z ${CI:-} ]]; then
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    if (( ! _UI_UTF8 )); then
+      frames='|/-'
+    fi
+    local n=${#frames}
+    local i=0
+    local ch=''
+    local sgr=''
+    _ui_theme accent
+    sgr=$_UI_SGR
+    while kill -0 "$pid" 2>/dev/null; do
+      ch=${frames:i:1}
+      printf '\r%s%s%s %s' "$sgr" "$ch" "$_UI_RESET" "$msg" >&2
+      i=$(( (i + 1) % n ))
+      sleep 0.1
+    done
+    printf '\r%*s\r' "$_UI_WIDTH" '' >&2
+  fi
+
+  rc=0
+  wait "$pid" || rc=$?
+
+  local out=''
+  if [[ -s $tmp ]]; then
+    out=$(<"$tmp")
+  fi
+  rm -f "$tmp"
+
+  if (( rc == 0 )); then
+    ui_ok "$msg"
+  else
+    if [[ -n $out ]]; then
+      printf '%s\n' "$out" >&2
+    fi
+    ui_err "$msg (exit $rc)"
+  fi
+  return "$rc"
+}
+
+# ui_confirm "Question?" [default y|n] — yes/no prompt. Returns 0 for yes and 1
+# for no. UI_YES=1 answers yes; a non-interactive run uses the default (n).
+ui_confirm() {
+  local question=${1:-}
+  local default=${2:-n}
+  local prompt='[y/N]'
+
+  if [[ ${UI_YES:-0} == 1 ]]; then
+    return 0
+  fi
+  if [[ $default == y ]]; then
+    prompt='[Y/n]'
+  fi
+
+  if (( _UI_HAS_GUM )); then
+    gum confirm "$question"
+    return $?
+  fi
+
+  if (( ! _UI_TTY )) || [[ -n ${CI:-} ]]; then
+    if [[ $default == y ]]; then
+      return 0
+    fi
+    return 1
+  fi
+
+  local answer=''
+  local sgr=''
+  _ui_theme accent
+  sgr=$_UI_SGR
+  printf '%s?%s %s %s ' "$sgr" "$_UI_RESET" "$question" "$prompt" >&2
+  if ! read -r answer; then
+    answer=''
+  fi
+  case $answer in
+    [Yy] | [Yy][Ee][Ss]) return 0 ;;
+    [Nn] | [Nn][Oo]) return 1 ;;
+    '') if [[ $default == y ]]; then return 0; else return 1; fi ;;
+    *) return 1 ;;
+  esac
+}
+
+# ui_table — read TSV from stdin and print aligned columns with a bold header,
+# on stderr. The first row is the header. Returns 0.
+ui_table() {
+  local -a rows=()
+  local line=''
+  while IFS= read -r line; do
+    rows+=("$line")
+  done
+
+  if (( ${#rows[@]} == 0 )); then
+    return 0
+  fi
+
+  local -a fields=()
+  local -a widths=()
+  local i=0
+  local w=0
+  for line in "${rows[@]}"; do
+    IFS=$'\t' read -r -a fields <<< "$line"
+    for i in "${!fields[@]}"; do
+      w=${#fields[i]}
+      if (( w > ${widths[i]:-0} )); then
+        widths[i]=$w
+      fi
+    done
+  done
+
+  local total=2
+  for w in "${widths[@]}"; do
+    total=$(( total + w ))
+  done
+  total=$(( total + 2 * ( ${#widths[@]} - 1 ) ))
+
+  local first=1
+  local last=0
+  local j=0
+  local out=''
+  local cell=''
+  for line in "${rows[@]}"; do
+    IFS=$'\t' read -r -a fields <<< "$line"
+    last=$(( ${#fields[@]} - 1 ))
+    out=''
+    for j in "${!fields[@]}"; do
+      if (( j == last )); then
+        out+="${fields[j]}"
+      else
+        printf -v cell '%-*s  ' "${widths[j]:-0}" "${fields[j]}"
+        out+=$cell
+      fi
+    done
+    if (( first )); then
+      _ui_theme bold
+      printf '  %s%s%s\n' "$_UI_SGR" "$out" "$_UI_RESET" >&2
+      _ui_theme dim
+      _ui_fill "$total"
+      printf '  %s%s%s\n' "$_UI_SGR" "$_UI_FILL" "$_UI_RESET" >&2
+      first=0
+    else
+      printf '  %s\n' "$out" >&2
+    fi
+  done
+  return 0
+}
