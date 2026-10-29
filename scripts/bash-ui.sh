@@ -323,13 +323,15 @@ cmd_inline() {
   [[ -n $file ]] || die "usage: bash-ui inline [--check] <file>"
   [[ -f $file ]] || die "no such file: $file"
 
-  local ui version
-  ui=$DEFAULT_PATH
-  [[ -f $ui ]] || die "$ui not found; run init first"
-  version=$(read_version "$ui")
-
   if ! grep -q '^# >>> bash-ui ' "$file"; then
     die "no '# >>> bash-ui <version> >>>' marker in $file"
+  fi
+
+  local version
+  if [[ -f $DEFAULT_PATH ]]; then
+    version=$(read_version "$DEFAULT_PATH")
+  else
+    version=$(latest_version) || die "cannot determine the latest release"
   fi
 
   if (( check )); then
@@ -342,7 +344,21 @@ cmd_inline() {
     return 1
   fi
 
+  local ui=$DEFAULT_PATH
+  local tmp=''
+  if [[ ! -f $ui ]]; then
+    tmp=$(mktemp)
+    if ! fetch ui.sh "$tmp" "$version"; then
+      rm -f "$tmp"
+      die "could not download ui.sh"
+    fi
+    ui=$tmp
+  fi
+
   rewrite_markers "$ui" "$version" "$file"
+  if [[ -n $tmp ]]; then
+    rm -f "$tmp"
+  fi
   note "Inlined bash-ui $version into $file"
 }
 

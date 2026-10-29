@@ -11,18 +11,36 @@ Human output goes to **stderr**; only data helpers write to stdout.
 
 ## Load it
 
-Use this block at the top of the script. It finds a per-user or system install
-and falls back to stubs so the script never hard-fails when the library is
-missing.
+The library is **vendored per project** at `vendor/bash-ui/ui.sh` plus its
+`ui.sh.sha256`, never installed globally. Vendor it once:
 
 ```bash
-# shellcheck source=/dev/null
-for _f in "${BASH_UI:-}" "$HOME/.local/lib/bash-ui/ui.sh" /usr/local/lib/bash-ui/ui.sh; do
-  if [[ -n $_f && -r $_f ]]; then
-    source "$_f"
-    break
+bash <(curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/scripts/bash-ui.sh) init
+```
+
+Then use this block at the top of every script. It honours `$BASH_UI`, walks up
+to the nearest `vendor/bash-ui/ui.sh`, and falls back to stubs so a script never
+hard-fails when the library is missing.
+
+```bash
+_ui_lib=${BASH_UI:-}
+if [[ -z $_ui_lib ]]; then
+  _ui_dir=$(dirname "${BASH_SOURCE[0]}")
+  while [[ $_ui_dir != '/' && $_ui_dir != '.' ]]; do
+    if [[ -r $_ui_dir/vendor/bash-ui/ui.sh ]]; then
+      _ui_lib=$_ui_dir/vendor/bash-ui/ui.sh
+      break
+    fi
+    _ui_dir=$(dirname "$_ui_dir")
+  done
+  if [[ -z $_ui_lib && -r ./vendor/bash-ui/ui.sh ]]; then
+    _ui_lib=./vendor/bash-ui/ui.sh
   fi
-done
+fi
+# shellcheck source=/dev/null
+if [[ -n $_ui_lib ]]; then
+  source "$_ui_lib"
+fi
 command -v ui_ok >/dev/null 2>&1 || {
   ui_ok(){ printf 'OK: %s\n' "$*" >&2; }; ui_warn(){ printf 'WARN: %s\n' "$*" >&2; }
   ui_err(){ printf 'ERR: %s\n' "$*" >&2; }; ui_die(){ printf 'ERR: %s\n' "$*" >&2; exit "${2:-1}"; }
@@ -134,7 +152,7 @@ After:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-source "$HOME/.local/lib/bash-ui/ui.sh"
+source vendor/bash-ui/ui.sh
 
 ui_header "Backup" "example.com"
 ui_section "Pre-flight"

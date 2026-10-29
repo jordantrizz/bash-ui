@@ -29,21 +29,22 @@ A single sourceable bash library (`ui.sh`) that gives every LMT script the same 
 ```
 bash-ui/
 ├── ui.sh                  # the library (single file, the only runtime artifact)
-├── VERSION                # semver, e.g. 1.0.0 — source of truth
+├── VERSION                # semver, e.g. 0.2.0 — source of truth
 ├── CHANGELOG.md
-├── install.sh             # installer / updater (Phase 3)
-├── bin/
-│   └── bash-ui             # CLI: version, update, check, demo, inline
+├── scripts/
+│   └── bash-ui.sh         # vendoring tool: init, check, update, inline
 ├── skills/
 │   └── bash-ui/SKILL.md    # AI skill (Phase 2)
 ├── examples/
 │   ├── demo.sh            # shows every function (also used for screenshots)
 │   └── template.sh        # starter script for new tools
 ├── tests/
-│   └── ui.bats            # bats-core tests
+│   ├── ui.bats            # library tests
+│   └── cli.bats           # vendoring tool tests
 ├── .github/workflows/
 │   ├── ci.yml
-│   └── release.yml
+│   ├── release.yml
+│   └── sync-inline.yml
 ├── AGENTS.md
 └── README.md
 ```
@@ -136,10 +137,24 @@ It uses the 16-colour ANSI set only, so it looks right in any terminal and over 
 **Standard load snippet** (in the template and the skill):
 
 ```bash
+_ui_lib=${BASH_UI:-}
+if [[ -z $_ui_lib ]]; then
+  _ui_dir=$(dirname "${BASH_SOURCE[0]}")
+  while [[ $_ui_dir != '/' && $_ui_dir != '.' ]]; do
+    if [[ -r $_ui_dir/vendor/bash-ui/ui.sh ]]; then
+      _ui_lib=$_ui_dir/vendor/bash-ui/ui.sh
+      break
+    fi
+    _ui_dir=$(dirname "$_ui_dir")
+  done
+  if [[ -z $_ui_lib && -r ./vendor/bash-ui/ui.sh ]]; then
+    _ui_lib=./vendor/bash-ui/ui.sh
+  fi
+fi
 # shellcheck source=/dev/null
-for _f in "${BASH_UI:-}" "$HOME/.local/lib/bash-ui/ui.sh" /usr/local/lib/bash-ui/ui.sh; do
-  [[ -n $_f && -r $_f ]] && { source "$_f"; break; }
-done
+if [[ -n $_ui_lib ]]; then
+  source "$_ui_lib"
+fi
 command -v ui_ok >/dev/null 2>&1 || {   # minimal fallback so scripts never hard-fail
   ui_ok(){ echo "OK: $*" >&2; }; ui_warn(){ echo "WARN: $*" >&2; }
   ui_err(){ echo "ERR: $*" >&2; }; ui_die(){ echo "ERR: $*" >&2; exit "${2:-1}"; }
@@ -162,74 +177,79 @@ command -v ui_ok >/dev/null 2>&1 || {   # minimal fallback so scripts never hard
 
 ## Phase 3 — Versioning, releases and updates
 
-There are two kinds of consumers, so there are two update paths.
+There is one kind of consumer: a project that includes the library. The vendored
+file is both the dependency and the lock — it carries `UI_VERSION`, so the
+version is visible in every pull request and no manifest can drift away from it.
 
-### A. Installed copy (workstations, homelab, servers you control)
+### A. Vendored copy (the default)
 
-**Install:**
+**Add it to a project:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/bash-ui/main/install.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/<owner>/bash-ui/main/scripts/bash-ui.sh) init
 ```
-- Per-user installs go to `~/.local/lib/bash-ui/`, and root installs go to `/usr/local/lib/bash-ui/`.
-- It also installs the `bash-ui` CLI to `~/.local/bin` or `/usr/local/bin`.
+- It writes `vendor/bash-ui/ui.sh` and `vendor/bash-ui/ui.sh.sha256`. Both are committed.
+- The checksum proves the committed file is the published one, not a local edit.
+- Scripts source it by walking up to the nearest `vendor/bash-ui/ui.sh`, with `$BASH_UI` as an override.
 
-**Update mechanism:**
-- `bash-ui update` fetches the latest GitHub Release, downloads `ui.sh` and `ui.sh.sha256`, verifies the checksum, and replaces the file atomically (write to temp, then `mv`).
-- It refuses major-version jumps unless `--major` is passed.
-- `bash-ui check` reports whether an update is available without changing anything.
+**Update mechanism (developer-initiated, never automatic):**
+- The tool is fetched per run and never installed:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/<owner>/bash-ui/main/scripts/bash-ui.sh | bash -s -- update
+  ```
+- `update` fetches the latest release, verifies the checksum, replaces the file atomically (write to temp, then `mv`) and rewrites any inline regions.
+- `update --version X` pins a release, and `BASH_UI_SOURCE` points at a mirror.
+- `check` reports a stale vendored copy, a stale inline region or a checksum mismatch, and exits non-zero.
 
-**Automatic updates (opt-in):**
-- `bash-ui install-timer` adds a systemd user timer, or cron where there's no systemd, that runs `bash-ui update --quiet` daily.
-- Where you'd rather pull than poll, the same command can run from your existing config tooling.
+**CI check, with no tool at all:**
+- The file states its own version, so three lines of shell compare it to the latest release tag and run `sha256sum -c`. `init --ci` writes that workflow.
 
-**Runtime check (optional, off by default):**
-- If `UI_UPDATE_CHECK=1`, sourcing `ui.sh` checks a cached timestamp. At most once per day, it backgrounds a `bash-ui check` and shows one dim line next run if an update exists.
-- It never blocks a script and never updates during a script run.
+**Runtime check:** none. There is no timer, no `UI_UPDATE_CHECK`, and nothing phones home. Drift is caught in CI, where a human reviews the update.
 
 ### B. Inlined copy (single-file scripts shipped to client servers)
 
 Some scripts must be one file, e.g. scp'd to a client box. For those:
 - Mark the library region in the consuming script:
   ```bash
-  # >>> bash-ui 1.2.0 >>>
+  # >>> bash-ui 0.2.0 >>>
   …inlined ui.sh…
   # <<< bash-ui <<<
   ```
-- `bash-ui inline script.sh` replaces the region with the current `ui.sh` (and the version in the marker).
-- `bash-ui inline --check script.sh` exits non-zero if the inlined copy is stale. This is used in CI.
+- `bash scripts/bash-ui.sh inline script.sh` replaces the region with the current `ui.sh` (and the version in the marker).
+- `bash scripts/bash-ui.sh inline --check script.sh` exits non-zero if the inlined copy is stale. This is used in CI.
 
 **Automatic updates for inlined copies, via GitHub Actions in each consuming repo:**
 - Add a reusable workflow, `bash-ui/.github/workflows/sync-inline.yml` (`workflow_call`).
 - Consuming repos call it on a weekly `schedule` plus `workflow_dispatch`.
-- It finds files with the marker, runs `bash-ui inline`, and opens a PR if anything changed. The PR is titled "Update bash-ui to X.Y.Z" and includes the changelog excerpt.
+- It finds files with the marker, runs the inline step, and opens a PR if anything changed. The PR is titled "Update bash-ui to X.Y.Z".
 - Optional push model: `release.yml` in this repo sends a `repository_dispatch` to a list of consumer repos, so they update right after a release instead of waiting for the schedule. This needs a fine-grained PAT stored as a secret.
 
 ### This repo's workflows
 
 **`ci.yml`** (push and PR):
-- shellcheck on `ui.sh`, `install.sh`, `bin/bash-ui` and the examples
-- bats tests on ubuntu-latest (bash 5); add a bash 4.2 container job
+- shellcheck on `ui.sh`, `scripts/bash-ui.sh` and the examples
+- bats tests on ubuntu-latest (bash 5), plus a bash 4.2 container smoke test
 - check that `VERSION` matches `UI_VERSION` inside `ui.sh`
 - check that CHANGELOG has an entry for `VERSION`
 
 **`release.yml`** (on a `v*` tag push):
 - check that the tag matches `VERSION`
-- build release assets: `ui.sh`, `ui.sh.sha256`, `bash-ui`, `install.sh`
+- build release assets: `ui.sh`, `ui.sh.sha256`, `bash-ui.sh`
 - create a GitHub Release with notes from the CHANGELOG
 - optionally send `repository_dispatch` to consumers
 
 **Versioning:**
 - Semver applies to the public `ui_*` API and `UI_*` env vars.
+- While the version is `0.x`, a minor bump may rename or remove a function or variable, so consumers pin what they vendor.
 - Patch = fixes and visual tweaks.
-- Minor = new functions or options.
+- Minor = new functions or options (breaking while `0.x`).
 - Major = renamed or removed functions, or behaviour changes that break callers.
 
 ### Phase 3 done when
 
-- [ ] `install.sh`, `bash-ui update/check/inline` work and are tested
-- [ ] Release workflow produces a checksummed release from a tag
+- [x] `scripts/bash-ui.sh init/check/update/inline` work and are tested
+- [x] A scratch project can vendor the library, detect a stale copy and update it
+- [x] Release workflow produces a checksummed release from a tag
 - [ ] Reusable sync workflow opens a PR in one real consumer repo
-- [ ] Timer install tested on a homelab host
 
 ---
 

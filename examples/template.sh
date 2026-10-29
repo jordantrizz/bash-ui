@@ -1,19 +1,35 @@
 #!/usr/bin/env bash
 # examples/template.sh — copy this file to start a new script.
 #
-# The load block below finds bash-ui in BASH_UI, the per-user install and the
-# system install, and falls back to a minimal stub so the script never
-# hard-fails when the library is missing.
+# It loads the vendored copy at vendor/bash-ui/ui.sh (or $BASH_UI) and falls
+# back to a minimal stub so the script never hard-fails when the library is
+# missing. Vendor it first with:
+#
+#   bash <(curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/scripts/bash-ui.sh) init
 
 set -euo pipefail
 
-# shellcheck source=/dev/null
-for _f in "${BASH_UI:-}" "$HOME/.local/lib/bash-ui/ui.sh" /usr/local/lib/bash-ui/ui.sh; do
-  if [[ -n $_f && -r $_f ]]; then
-    source "$_f"
-    break
+# Locate the vendored library: $BASH_UI wins, otherwise the nearest
+# vendor/bash-ui/ui.sh at or above this script's directory.
+_ui_lib=${BASH_UI:-}
+if [[ -z $_ui_lib ]]; then
+  _ui_dir=$(dirname "${BASH_SOURCE[0]}")
+  while [[ $_ui_dir != '/' && $_ui_dir != '.' ]]; do
+    if [[ -r $_ui_dir/vendor/bash-ui/ui.sh ]]; then
+      _ui_lib=$_ui_dir/vendor/bash-ui/ui.sh
+      break
+    fi
+    _ui_dir=$(dirname "$_ui_dir")
+  done
+  if [[ -z $_ui_lib && -r ./vendor/bash-ui/ui.sh ]]; then
+    _ui_lib=./vendor/bash-ui/ui.sh
   fi
-done
+fi
+
+# shellcheck source=/dev/null
+if [[ -n $_ui_lib ]]; then
+  source "$_ui_lib"
+fi
 
 if ! command -v ui_ok >/dev/null 2>&1; then
   ui_ok() { printf 'OK: %s\n' "$*" >&2; }

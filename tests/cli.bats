@@ -173,9 +173,18 @@ stage_version() {
   [[ $output == *"unterminated"* ]]
 }
 
-@test "inline needs a vendored copy first" {
+@test "inline works without a vendored copy" {
   printf '# >>> bash-ui 0.0.1 >>>\nold\n# <<< bash-ui <<<\n' >target.sh
-  run bash "$CLI" inline target.sh
+
+  run bash "$CLI" inline --check target.sh
   [ "$status" -eq 1 ]
-  [[ $output == *"run init first"* ]]
+
+  run bash "$CLI" inline target.sh
+  [ "$status" -eq 0 ]
+  grep -q "^# >>> bash-ui $CURRENT >>>$" target.sh
+  grep -q 'UI_VERSION=' target.sh
+  [ ! -d vendor ]
+
+  run bash "$CLI" inline --check target.sh
+  [ "$status" -eq 0 ]
 }

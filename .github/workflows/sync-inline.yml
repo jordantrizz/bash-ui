@@ -23,10 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bash-ui
+      - name: Fetch the bash-ui tool
         run: |
-          curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/install.sh | bash
-          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/bash-ui"
+          curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/scripts/bash-ui.sh \
+            -o "$RUNNER_TEMP/bash-ui/bash-ui.sh"
 
       - name: Sync marker files
         env:
@@ -44,7 +45,7 @@ jobs:
           fi
 
           for file in "${files[@]}"; do
-            bash-ui inline "$file"
+            bash "$RUNNER_TEMP/bash-ui/bash-ui.sh" inline "$file"
           done
 
       - name: Open a pull request when something changed
@@ -57,7 +58,8 @@ jobs:
             exit 0
           fi
 
-          version=$(bash-ui version | awk '{print $2}')
+          version=$(git diff -U0 | sed -n 's/^+# >>> bash-ui \(.*\) >>>$/\1/p' | head -1)
+          version=${version:-unknown}
           branch="chore/bash-ui-inline-${version//./-}"
 
           git config user.name "github-actions[bot]"
