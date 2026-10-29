@@ -63,6 +63,26 @@ Roles for `ui_style`: `accent`, `ok`, `warn`, `err`, `info`, `dim`, `bold`.
 | `UI_APP_NAME` | Name shown by `ui_header` (defaults to the script name) |
 | `CI` | Treat the run as non-interactive |
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/install.sh | bash
+```
+
+That installs `ui.sh` to `~/.local/lib/bash-ui/` and the `bash-ui` CLI to
+`~/.local/bin/` (or under `/usr/local` when run as root). Use
+`./install.sh --prefix DIR` for somewhere else.
+
+| Command | What it does |
+|---|---|
+| `bash-ui version` | Print the installed library version |
+| `bash-ui check` | Exit 1 when a newer release exists |
+| `bash-ui update [--major]` | Verify the checksum and replace `ui.sh` atomically |
+| `bash-ui demo` | Run the bundled demo from a checkout |
+| `bash-ui inline <file>` | Sync the `# >>> bash-ui x.y.z >>>` region in a script |
+| `bash-ui inline --check <file>` | Exit non-zero when the inlined copy is stale |
+| `bash-ui install-timer` | Schedule a daily `update --quiet` (systemd user timer, or cron) |
+
 ## Develop
 
 ```bash

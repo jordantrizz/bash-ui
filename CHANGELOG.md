@@ -6,6 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- `install.sh`, with per-user (`~/.local`) and system-wide (`/usr/local`)
+  prefixes, checksum verification and a `BASH_UI_SOURCE` override.
+- `bin/bash-ui` CLI: `version`, `check`, `update`, `demo`, `inline`,
+  `inline --check` and `install-timer`.
+- `skills/bash-ui/SKILL.md`, the agent skill that teaches the library's
+  vocabulary and refactor workflow. Synced to the `lmt-skills` repo.
+
 ## 1.0.0 — 2026-10-29
 
 ### Added

@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# bin/bash-ui — manage a bash-ui installation.
+#
+#   bash-ui version                  print the installed library version
+#   bash-ui check                    exit 1 when a newer release exists
+#   bash-ui update [--major] [--quiet]
+#   bash-ui demo                     run the bundled demo
+#   bash-ui inline [--check] <file>  sync the inlined library region
+#   bash-ui install-timer            schedule a daily update check
+#
+# BASH_UI_SOURCE points at a directory or release URL to fetch from; it exists
+# for mirrors, air-gapped hosts and tests.
+
+set -uo pipefail
+
+BASH_UI_REPO="jordantrizz/bash-ui"
+BASH_UI_URL="https://github.com/$BASH_UI_REPO"
+
+die() {
+  printf 'bash-ui: %s\n' "$*" >&2
+  exit 1
+}
+
+note() {
+  printf '%s\n' "$*" >&2
+}
+
+usage() {
+  sed -n '4,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# find_ui — print the path of the library in use.
+find_ui() {
+  local self_dir
+  self_dir=$(dirname "${BASH_SOURCE[0]}")
+  local candidate
+  for candidate in \
+    "${BASH_UI:-}" \
+    "$HOME/.local/lib/bash-ui/ui.sh" \
+    "/usr/local/lib/bash-ui/ui.sh" \
+    "$self_dir/../lib/bash-ui/ui.sh" \
+    "$self_dir/../ui.sh"; do
+    if [[ -n $candidate && -r $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# read_version <ui.sh> — print the UI_VERSION value.
+read_version() {
+  sed -n 's/^UI_VERSION="\(.*\)"$/\1/p' "$1" | head -1
+}
+
+# sha256_of <file> — print the hex digest, using whichever tool exists.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# version_gt <a> <b> — true when a is greater than b.
+version_gt() {
+  local IFS=.
+  local -a left right
+  read -r -a left <<< "$1"
+  read -r -a right <<< "$2"
+  local i x y
+  for i in 0 1 2; do
+    x=${left[i]:-0}
+    y=${right[i]:-0}
+    if (( 10#$x > 10#$y )); then
+      return 0
+    fi
+    if (( 10#$x < 10#$y )); then
+      return 1
+    fi
+  done
+  return 1
+}
+
+# latest_version — print the newest published version.
+latest_version() {
+  if [[ -n ${BASH_UI_SOURCE:-} && -d ${BASH_UI_SOURCE} ]]; then
+    read_version "$BASH_UI_SOURCE/ui.sh"
+    return
+  fi
+  local tag
+  tag=$(curl -fsSL "https://api.github.com/repos/$BASH_UI_REPO/releases/latest" 2>/dev/null |
+    sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -1)
+  if [[ -z $tag ]]; then
+    return 1
+  fi
+  printf '%s\n' "$tag"
+}
+
+# fetch <name> <dest> — copy one release asset.
+fetch() {
+  local name=$1 dest=$2
+  if [[ -n ${BASH_UI_SOURCE:-} && -d ${BASH_UI_SOURCE} ]]; then
+    cp "$BASH_UI_SOURCE/$name" "$dest"
+    return
+  fi
+  local base=${BASH_UI_SOURCE:-$BASH_UI_URL/releases/latest/download}
+  curl -fsSL "$base/$name" -o "$dest"
+}
+
+cmd_version() {
+  local ui
+  ui=$(find_ui) || die "library not found; set BASH_UI or run install.sh"
+  printf 'bash-ui %s\n' "$(read_version "$ui")"
+}
+
+cmd_check() {
+  local ui current latest
+  ui=$(find_ui) || die "library not found"
+  current=$(read_version "$ui")
+  latest=$(latest_version) || die "cannot determine the latest release"
+  if [[ $latest == "$current" ]]; then
+    note "bash-ui $current is up to date"
+    return 0
+  fi
+  note "Update available: $current -> $latest"
+  return 1
+}
+
+cmd_update() {
+  local major=0 quiet=0
+  while (( $# )); do
+    case $1 in
+      --major) major=1; shift ;;
+      --quiet) quiet=1; shift ;;
+      --source) BASH_UI_SOURCE=${2:-}; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+
+  local ui current latest
+  ui=$(find_ui) || die "library not found"
+  current=$(read_version "$ui")
+  latest=$(latest_version) || die "cannot determine the latest release"
+
+  if [[ $latest == "$current" ]]; then
+    if (( ! quiet )); then
+      note "bash-ui $current is up to date"
+    fi
+    return 0
+  fi
+
+  local current_major=${current%%.*} latest_major=${latest%%.*}
+  if (( latest_major > current_major )) && (( ! major )); then
+    die "refusing major jump $current -> $latest; rerun with --major"
+  fi
+
+  local dir
+  dir=$(dirname "$ui")
+  local tmp="$dir/.ui.sh.new.$$"
+  local sumfile="$dir/.ui.sh.sha256.$$"
+
+  if ! fetch ui.sh "$tmp"; then
+    rm -f "$tmp"
+    die "could not download ui.sh"
+  fi
+  if ! fetch ui.sh.sha256 "$sumfile"; then
+    rm -f "$tmp" "$sumfile"
+    die "could not download ui.sh.sha256"
+  fi
+
+  local expected actual
+  expected=$(awk '{print $1; exit}' "$sumfile")
+  actual=$(sha256_of "$tmp") || {
+    rm -f "$tmp" "$sumfile"
+    die "no sha256 tool available"
+  }
+  if [[ $expected != "$actual" ]]; then
+    rm -f "$tmp" "$sumfile"
+    die "checksum mismatch; keeping $ui"
+  fi
+
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$ui"
+  rm -f "$sumfile"
+
+  if (( ! quiet )); then
+    note "Updated bash-ui $current -> $latest"
+  fi
+}
+
+cmd_demo() {
+  local ui self_dir
+  ui=$(find_ui) || die "library not found"
+  self_dir=$(dirname "${BASH_SOURCE[0]}")
+  if [[ -x "$self_dir/../examples/demo.sh" || -f "$self_dir/../examples/demo.sh" ]]; then
+    BASH_UI="$ui" bash "$self_dir/../examples/demo.sh"
+    return
+  fi
+  die "demo not found; run it from a checkout"
+}
+
+cmd_inline() {
+  local check=0 file=''
+  while (( $# )); do
+    case $1 in
+      --check) check=1; shift ;;
+      *) file=$1; shift ;;
+    esac
+  done
+  [[ -n $file ]] || die "usage: bash-ui inline [--check] <file>"
+  [[ -f $file ]] || die "no such file: $file"
+
+  local ui version
+  ui=$(find_ui) || die "library not found"
+  version=$(read_version "$ui")
+
+  if ! grep -q '^# >>> bash-ui ' "$file"; then
+    die "no '# >>> bash-ui <version> >>>' marker in $file"
+  fi
+
+  local embedded
+  embedded=$(sed -n 's/^# >>> bash-ui \(.*\) >>>$/\1/p' "$file" | head -1)
+
+  if (( check )); then
+    if [[ $embedded == "$version" ]]; then
+      return 0
+    fi
+    note "$file: inlined bash-ui $embedded, current is $version"
+    return 1
+  fi
+
+  local tmp="$file.tmp.$$"
+  BASH_UI_VER="$version" BASH_UI_LIB="$ui" awk '
+    BEGIN { in_region = 0; closed = 0 }
+    /^# >>> bash-ui .* >>>$/ {
+      print "# >>> bash-ui " ENVIRON["BASH_UI_VER"] " >>>"
+      while ((getline line < ENVIRON["BASH_UI_LIB"]) > 0) {
+        print line
+      }
+      close(ENVIRON["BASH_UI_LIB"])
+      in_region = 1
+      closed = 1
+      next
+    }
+    /^# <<< bash-ui <<<$/ {
+      if (in_region) {
+        print
+        in_region = 0
+        next
+      }
+    }
+    in_region { next }
+    { print }
+    END { if (in_region) exit 3 }
+  ' "$file" >"$tmp"
+  local rc=$?
+  if (( rc != 0 )); then
+    rm -f "$tmp"
+    die "unterminated bash-ui region in $file"
+  fi
+
+  cat "$tmp" >"$file"
+  rm -f "$tmp"
+  note "Inlined bash-ui $version into $file"
+}
+
+cmd_install_timer() {
+  local self
+  self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    local dir="$HOME/.config/systemd/user"
+    mkdir -p "$dir"
+    cat >"$dir/bash-ui-update.service" <<EOF
+[Unit]
+Description=Update bash-ui
+
+[Service]
+Type=oneshot
+ExecStart=$self update --quiet
+EOF
+    cat >"$dir/bash-ui-update.timer" <<EOF
+[Unit]
+Description=Daily bash-ui update check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable --now bash-ui-update.timer || die "could not enable the timer"
+    note "Installed systemd user timer bash-ui-update.timer"
+    return
+  fi
+
+  if ! command -v crontab >/dev/null 2>&1; then
+    die "neither systemd --user nor crontab is available"
+  fi
+  local line="17 4 * * * $self update --quiet >/dev/null 2>&1"
+  if crontab -l 2>/dev/null | grep -Fq "$self update --quiet"; then
+    note "Cron entry already present"
+    return
+  fi
+  {
+    crontab -l 2>/dev/null || true
+    printf '%s\n' "$line"
+  } | crontab - || die "could not write the crontab"
+  note "Installed daily cron entry"
+}
+
+main() {
+  local cmd=${1:-}
+  case $cmd in
+    version) cmd_version ;;
+    check) cmd_check ;;
+    update) shift; cmd_update "$@" ;;
+    demo) cmd_demo ;;
+    inline) shift; cmd_inline "$@" ;;
+    install-timer) cmd_install_timer ;;
+    -h | --help | help | '') usage ;;
+    *) die "unknown command: $cmd (try --help)" ;;
+  esac
+}
+
+main "$@"
