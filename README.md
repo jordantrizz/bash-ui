@@ -7,7 +7,8 @@ palette, one set of symbols, one vocabulary of output functions.
 - **Safe for automation.** Colour, animation and prompts switch themselves off
   for pipes, cron and CI, so logs stay clean.
 - **Stable API.** Public names are `ui_*` functions and `UI_*` environment
-  variables, versioned with semver.
+  variables, versioned with semver. While the version is `0.x` a minor bump may
+  break callers, so pin what you install.
 - **Human output on stderr.** `result=$(myscript)` and `myscript | jq` keep
   working.
 

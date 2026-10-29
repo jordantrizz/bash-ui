@@ -1,21 +1,15 @@
 # Changelog
 
 All notable changes to this project are documented in this file. The format
-follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
-project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) from
+1.0.0 onwards. While the version is `0.x`, a **minor** bump may rename or
+remove a `ui_*` function or a `UI_*` variable, so pin the version you install.
 
 ## Unreleased
 
-### Added
-
-- `install.sh`, with per-user (`~/.local`) and system-wide (`/usr/local`)
-  prefixes, checksum verification and a `BASH_UI_SOURCE` override.
-- `bin/bash-ui` CLI: `version`, `check`, `update`, `demo`, `inline`,
-  `inline --check` and `install-timer`.
-- `skills/bash-ui/SKILL.md`, the agent skill that teaches the library's
-  vocabulary and refactor workflow. Synced to the `lmt-skills` repo.
-
-## 1.0.0 — 2026-10-29
+## 0.1.0 — 2026-10-29
 
 ### Added
 
@@ -30,3 +24,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `UI_VERBOSE`, `UI_YES`, `UI_TIMESTAMPS`, `CI` and an optional gum backend.
 - `examples/demo.sh`, `examples/template.sh` and bats coverage in
   `tests/ui.bats`.
+- `install.sh`, with per-user (`~/.local`) and system-wide (`/usr/local`)
+  prefixes, checksum verification and a `BASH_UI_SOURCE` override.
+- `bin/bash-ui` CLI: `version`, `check`, `update`, `demo`, `inline`,
+  `inline --check` and `install-timer`, with tests in `tests/cli.bats`.
+- `skills/bash-ui/SKILL.md`, the agent skill that teaches the library's
+  vocabulary and refactor workflow. Synced to the `lmt-skills` repo.
+- GitHub Actions: `ci.yml` (shellcheck, bats, version and changelog gates, plus
+  a bash 4.2 smoke test), `release.yml` and the reusable `sync-inline.yml`.
