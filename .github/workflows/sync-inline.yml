@@ -1,0 +1,75 @@
+name: Sync inlined bash-ui
+
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: "Space-separated files or globs to scan (default: every *.sh with a marker)"
+        required: false
+        type: string
+        default: ''
+    secrets:
+      token:
+        description: Token with contents and pull-requests write access
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bash-ui
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/jordantrizz/bash-ui/main/install.sh | bash
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+
+      - name: Sync marker files
+        env:
+          INPUT_PATHS: ${{ inputs.paths }}
+        run: |
+          if [[ -n "$INPUT_PATHS" ]]; then
+            read -r -a files <<<"$INPUT_PATHS"
+          else
+            mapfile -t files < <(grep -rl '^# >>> bash-ui ' --include='*.sh' . || true)
+          fi
+
+          if (( ${#files[@]} == 0 )); then
+            echo "No inlined bash-ui regions found."
+            exit 0
+          fi
+
+          for file in "${files[@]}"; do
+            bash-ui inline "$file"
+          done
+
+      - name: Open a pull request when something changed
+        env:
+          GH_TOKEN: ${{ secrets.token || github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          if git diff --quiet; then
+            echo "Already current."
+            exit 0
+          fi
+
+          version=$(bash-ui version | awk '{print $2}')
+          branch="chore/bash-ui-inline-${version//./-}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git diff --name-only -z | xargs -0 git add --
+          git commit -m "chore: update inlined bash-ui to ${version}"
+          git push --force-with-lease origin "$branch"
+
+          gh pr create \
+            --base "$BASE" \
+            --head "$branch" \
+            --title "Update inlined bash-ui to ${version}" \
+            --body "Refreshes the inlined \`bash-ui\` region in every marked script to ${version}." \
+            || echo "A pull request for ${branch} already exists."

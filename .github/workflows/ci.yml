@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck and bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bats
+
+      - name: Shellcheck
+        run: shellcheck ui.sh install.sh bin/bash-ui examples/demo.sh examples/template.sh
+
+      - name: Bats
+        run: bats tests/
+
+      - name: VERSION matches UI_VERSION
+        run: test "$(cat VERSION)" = "$(sed -n 's/^UI_VERSION="\(.*\)"$/\1/p' ui.sh)"
+
+      - name: CHANGELOG has an entry for VERSION
+        run: grep -q "^## $(cat VERSION)" CHANGELOG.md
+
+  bash42:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke test on bash 4.2
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src bash:4.2 bash -c '
+            set -euo pipefail
+            source ./ui.sh
+            ui_header "bash 4.2" "compatibility smoke test"
+            ui_section "Messages"
+            ui_step "running"
+            ui_ok "ok"
+            ui_warn "warn"
+            ui_err "err"
+            ui_kv "Key" "Value"
+            printf "A\tB\n1\t2\n" | ui_table
+            ui_confirm "non-interactive?" y
+            ui_summary
+          '

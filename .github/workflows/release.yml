@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches VERSION
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+
+      - name: Build release assets
+        run: |
+          mkdir -p dist
+          cp ui.sh dist/ui.sh
+          (cd dist && sha256sum ui.sh >ui.sh.sha256)
+          cp bin/bash-ui dist/bash-ui
+          chmod 0755 dist/bash-ui
+          cp install.sh dist/install.sh
+          chmod 0755 dist/install.sh
+
+      - name: Extract changelog notes
+        run: |
+          awk -v v="$(cat VERSION)" '
+            index($0, "## " v) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md >dist/notes.md
+          test -s dist/notes.md
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/ui.sh \
+            dist/ui.sh.sha256 \
+            dist/bash-ui \
+            dist/install.sh \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file dist/notes.md
